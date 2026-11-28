@@ -117,3 +117,7 @@
 Windows x64 继续读取同一用户原有的 DPAPI 密文。macOS arm64 的独立 CLI 直接将 API Key 存入系统 Keychain，Linux x64 及可访问 Secret Service 的 Android arm64 终端将其存入用户钥匙串。数据库保存版本化随机引用；轮换和回滚与配置事务协调。较大的工作区快照使用钥匙串保护的独立密钥加密。嵌入构建关闭 `standalone`，密钥、身份、SSO 与 SQLite 均由宿主自行选择。
 
 Windows Job Object、PowerShell 和控制台处理按 Windows 条件编译。Unix 命令经系统 shell 执行，采用独立进程组管理取消与超时。编译目标、工具链和 Android 运行条件见[构建说明](../README.md#跨平台构建)。
+
+## ADR-016 · 嵌入宿主的媒体引用与媒体引擎（2026-11-28）
+
+嵌入词汇沿用 codaKernel/1.1 的 `audio`、`video`、`resource` 工作区相对引用块，不内联文件内容。生成请求原样传递，宿主按上游能力转换或用确定性占位文本投影；压缩摘要使用 codaKernel/1.1 的摘要标记。`coda::media` 在关闭 `standalone` 时导出，凭据来源、产物与任务存储均由宿主实现，嵌入构建不读取环境变量或本机钥匙串。

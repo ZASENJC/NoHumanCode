@@ -1,6 +1,7 @@
 use tokio_util::sync::CancellationToken;
 
-/// Request admission shared by both model loops. Each driver owns its host I/O.
+/// Request admission for the embedded model loop. The standalone loop lives in
+/// `codacli_core::agent_loop`.
 pub(crate) struct ModelLoop {
     rounds: std::ops::Range<usize>,
 }

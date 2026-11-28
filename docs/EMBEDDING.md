@@ -1,6 +1,6 @@
 # Coda Bot 进程内接入
 
-Tauri 主进程依赖同一提交的 `coda` 与 `coda-protocol`。为 `coda` 指定 `default-features = false`，即可只编入内核。`coda::embedded` 重导出协议类型、`CancellationToken` 与 `BoxFuture`。独立 CLI 使用默认的 `standalone` 特性。
+Tauri 主进程依赖同一提交的 `coda` 与 `coda-protocol`。为 `coda` 指定 `default-features = false`，即可只编入内核与 `coda::media` 媒体引擎。`coda::embedded` 重导出协议类型、`CancellationToken` 与 `BoxFuture`。独立 CLI 使用默认的 `standalone` 特性。
 
 ```toml
 # 将 REV 替换为接入环境可获取的同一个完整提交 SHA。
@@ -117,3 +117,21 @@ return_to_host(turn.input.take_remaining().await);
 实现了 `Message` 穷举匹配的宿主需要新增 `Aborted` 分支。`load` 按该元数据还原 `Message::Aborted`，`ModelRequest.messages` 使用普通 `Assistant` 文本表示取消。部分回复可能为空。如果完整助手回复或工具意图已写入，独立中止行的 `content` 为空，保留先前回复和逐项工具结果。内核为下一次模型请求（包括压缩）生成一条明确说明用户已取消旧任务的助手文本；若前一条已经是助手消息，就把说明加在末尾。半截内容只进存档，模型看到的是取消说明和新问题。旧 pi 转换继续保留 `metadata.pi.message.stopReason` 及其原始审计字段；适配器回放该字段为 `aborted` 的助手条目时可用原运行 ID，缺失时以原条目 ID 关联。历史权威数据仍由 C3 codec 完整保存。
 
 `coda-protocol::embedded` 的 Rust 数据结构需要适配后再用 `@coda/contracts` 验证。宿主映射压缩忙闲状态，提供 C3 `tokensBefore` 等 codec 元数据，管理身份、持久 run ID 和工作区文件租约。pi 的 token 估算、阈值和用量分类由 Coda 接入层实现。重试事件、部分截断回复的持久化及旧 pi 存档转换同属宿主适配范围。
+
+## 媒体引用与媒体引擎（codaKernel/1.1）
+
+`Content` 与 `Block` 新增 `Audio`、`Video`、`Resource` 三种引用块，字段与 `codacli_core::messages::ContentBlock` 相同：工作区相对 `path`，音视频必填 `mime_type`，资源可选；`bytes`、`duration_ms`、`sha256`、`name` 可选，缺省时不序列化。块里只有路径，不内联 base64，文件由宿主按工作区租约读取。
+
+| 环节 | 内核行为 |
+| --- | --- |
+| 生成请求 | 原样放入 `ModelRequest.messages`。上游只收文本时，宿主用 `format_media_placeholder(&Content)` 或 `format_block_media_placeholder(&Block)` 投影，例如 `[audio: clips/a.wav (audio/wav, 1500ms, intro)]`，与 s6 各编解码器的占位文本一致。 |
+| 会话存储 | 随 `Entry::Message` 原样交给 `SessionStore::append`，`load` 应还原同一结构。 |
+| 压缩摘要 | 显式与回合内压缩的摘要请求把这些块替换为 codaKernel/1.1 摘要标记 `[audio:路径 (MIME)]`、`[video:路径 (MIME)]`、`[resource:路径]`。摘要回复含媒体块时按非法摘要处理。 |
+| 工具结果截断 | 内核不截断工具结果。宿主可用 `media_blocks::truncate_tool_content(content, max_chars)`：只计文本字数，保留前一半与后四分之一并插入省略标记，图片和媒体块按原顺序附在后面，与 codaKernel/1.1 的 `toolResultMaxChars` 相同。 |
+| 校验 | `media_blocks::validate_media_path` 沿用 codaKernel/1.1 规则：非空、工作区相对、不含控制字符、盘符或 `..`。内核不在进程内重复校验，宿主在接收用户或工具输入时检查。 |
+
+`media_blocks::core_content` 与 `core_block` 把内核块映射为 `codacli_core` 的 `ContentBlock`（`media_blocks::CoreBlock`）。
+
+`coda::media` 在 `default-features = false` 下可用，包含图片、TTS、STT、音乐、视频、向量与重排、实时会话等引擎，以及 `MediaCredentialSource`、`MediaArtifactStore`、`MediaTaskRepository` 等接口。宿主自行实现凭据来源和产物存储，引擎不读取环境变量或本机钥匙串。覆盖 `MediaCredentialSource::credential_set` 时，所需的 `CredentialSet` 位于 `coda::redaction`。
+
+**升级接线。** 穷举匹配 `Content` 或 `Block` 的宿主须为三种媒体块新增分支，可转换为宿主契约中的对应块，也可用上述占位函数投影为文本。

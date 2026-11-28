@@ -1,10 +1,12 @@
 //! In-process model loop. All external effects are supplied by the embedding host.
 mod compaction;
 mod input;
+pub mod media_blocks;
 mod partial;
 mod turn;
 
 pub use input::{EnqueueError, RunningTurn, TurnInput, UnconfirmedInput};
+pub use media_blocks::{format_block_media_placeholder, format_media_placeholder};
 
 use anyhow::{Context, Result, ensure};
 pub use coda_protocol::embedded::*;

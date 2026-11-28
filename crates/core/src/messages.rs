@@ -765,7 +765,8 @@ fn assistant_needs_coda_blocks(blocks: &[ContentBlock]) -> bool {
     false
 }
 
-pub(crate) fn format_media_block_placeholder(block: &ContentBlock) -> Option<String> {
+/// Deterministic text for an audio, video or resource block; `None` for other blocks.
+pub fn format_media_block_placeholder(block: &ContentBlock) -> Option<String> {
     match block {
         ContentBlock::Audio {
             path,
@@ -1689,7 +1690,8 @@ impl SessionBlock {
     }
 }
 
-pub(crate) fn validate_kernel_media_path(path: &str) -> std::result::Result<(), &'static str> {
+/// Accept only non-empty, workspace-relative paths without control characters or `..`.
+pub fn validate_kernel_media_path(path: &str) -> std::result::Result<(), &'static str> {
     if path.trim().is_empty() {
         return Err("media block path must be non-empty");
     }

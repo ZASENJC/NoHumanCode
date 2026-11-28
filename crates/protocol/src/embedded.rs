@@ -9,10 +9,56 @@ pub struct Model {
     pub provider: Option<String>,
 }
 
+/// Media blocks carry workspace-relative paths, never inline base64. Field names follow
+/// `codacli_core::messages::ContentBlock`. Hosts that only send text upstream can project them
+/// with `coda::embedded::format_media_placeholder`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Content {
-    Text { text: String },
-    Image { mime_type: String, data: String },
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        data: String,
+    },
+    /// codaKernel/1.1 reference to a workspace-relative audio file. Bytes stay with the host.
+    Audio {
+        path: String,
+        mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// codaKernel/1.1 reference to a workspace-relative video file.
+    Video {
+        path: String,
+        mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// codaKernel/1.1 reference to any other workspace-relative file.
+    Resource {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 /// Archival form of a host message. Only `content` is projected into the model request.
@@ -70,12 +116,60 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
+/// Assistant blocks. Media variants match the corresponding [`Content`] variants.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Block {
-    Text { text: String },
-    Image { mime_type: String, data: String },
-    Thinking { text: String },
-    ToolCall { call: ToolCall },
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        data: String,
+    },
+    /// See [`Content::Audio`].
+    Audio {
+        path: String,
+        mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// See [`Content::Video`].
+    Video {
+        path: String,
+        mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// See [`Content::Resource`].
+    Resource {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    Thinking {
+        text: String,
+    },
+    ToolCall {
+        call: ToolCall,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -256,6 +350,37 @@ pub enum Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_references_omit_absent_metadata_and_round_trip() {
+        let audio = Content::Audio {
+            path: "media/clip.wav".into(),
+            mime_type: "audio/wav".into(),
+            bytes: None,
+            duration_ms: Some(1500),
+            sha256: None,
+            name: None,
+        };
+        let json = serde_json::to_value(&audio).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"Audio": {"path": "media/clip.wav", "mime_type": "audio/wav", "duration_ms": 1500}})
+        );
+        assert_eq!(serde_json::from_value::<Content>(json).unwrap(), audio);
+        let resource: Block =
+            serde_json::from_value(serde_json::json!({"Resource": {"path": "docs/a.pdf"}}))
+                .unwrap();
+        assert_eq!(
+            resource,
+            Block::Resource {
+                path: "docs/a.pdf".into(),
+                mime_type: None,
+                bytes: None,
+                sha256: None,
+                name: None,
+            }
+        );
+    }
 
     #[test]
     fn legacy_compaction_entries_keep_their_wire_shape() {

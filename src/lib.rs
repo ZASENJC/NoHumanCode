@@ -2,6 +2,11 @@ pub mod embedded;
 pub use embedded::EmbeddedEngine;
 mod model_loop;
 
+/// Standalone media engines (images, TTS, STT, music, video, vectors, realtime). Embedding hosts
+/// supply `MediaCredentialSource`, `MediaArtifactStore` and `MediaTaskRepository`; nothing here
+/// reads environment variables or OS credential stores.
+pub use codacli_core::{media, redaction};
+
 #[cfg(all(test, feature = "standalone"))]
 extern crate self as coda;
 
@@ -9,8 +14,8 @@ extern crate self as coda;
 pub(crate) use codacli_core::agent_loop;
 #[cfg(feature = "standalone")]
 pub use codacli_core::{
-    agent_runtime, domain, kernel_embedded, media, messages, provider, provider_runtime,
-    provider_transport, provider_usage, redaction,
+    agent_runtime, domain, kernel_embedded, messages, provider, provider_runtime,
+    provider_transport, provider_usage,
 };
 #[cfg(feature = "standalone")]
 pub(crate) use codacli_core::{runtime_seams, tool_results};

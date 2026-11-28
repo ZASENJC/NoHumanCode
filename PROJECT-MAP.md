@@ -106,7 +106,7 @@ flowchart TD
 
 ### 2.3 链 C　进程内库宿主（M3 前置 B）
 
-宿主将模型网关、工具审查与执行、分支会话存储注入 `coda::EmbeddedEngine`。`default-features = false` 只链接嵌入模块及其协议。宿主按事件驱动界面，内核持有回合任务；关闭界面后，已开始的回合继续落盘。CLI 与 HTTP 入口使用默认 `standalone` 特性和 SQLite。
+宿主将模型网关、工具审查与执行、分支会话存储注入 `coda::EmbeddedEngine`。`default-features = false` 只链接嵌入模块、协议和 `coda::media` 媒体引擎。宿主按事件驱动界面，内核持有回合任务；关闭界面后，已开始的回合继续落盘。CLI 与 HTTP 入口使用默认 `standalone` 特性和 SQLite。
 
 | 模块 | 职责 |
 | --- | --- |
@@ -114,7 +114,8 @@ flowchart TD
 | [src/embedded/turn.rs](src/embedded/turn.rs) | 模型循环、流式回调、持久化工具意图、审查与批次收尾 |
 | [src/embedded/turn/prepare.rs](src/embedded/turn/prepare.rs) | 生成预检前的宿主压缩决策、重载分支、刷新工具和交付插话 |
 | [src/embedded/compaction.rs](src/embedded/compaction.rs) | 显式压缩和回合内压缩共用的摘要请求、用量及原子追加 |
-| [src/model_loop.rs](src/model_loop.rs) | 独立与嵌入模式共用的请求轮数与取消检查 |
+| [src/embedded/media_blocks.rs](src/embedded/media_blocks.rs) | 媒体引用块与 `codacli_core` 块的映射、占位文本、摘要标记、工具结果截断 |
+| [src/model_loop.rs](src/model_loop.rs) | 嵌入模式的请求轮数与取消检查；独立 CLI 的循环位于 `codacli_core::agent_loop` |
 | [crates/protocol/src/embedded.rs](crates/protocol/src/embedded.rs) | 零 I/O 的消息、工具、用量和回合事件类型 |
 | [tests/embedded_kernel.rs](tests/embedded_kernel.rs) | 纯宿主回调驱动的模型回合、工具、取消、压缩与冲突恢复 |
 | [tests/credential_lifecycle.rs](tests/credential_lifecycle.rs) | 独立 CLI 的系统钥匙串写入、轮换、回滚、重开与删除 |

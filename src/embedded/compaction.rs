@@ -31,7 +31,11 @@ fn summary_text(blocks: Vec<Block>) -> Result<String> {
         match block {
             Block::Text { text } => summary.push_str(&text),
             Block::Thinking { .. } => (),
-            Block::ToolCall { .. } | Block::Image { .. } => {
+            Block::ToolCall { .. }
+            | Block::Image { .. }
+            | Block::Audio { .. }
+            | Block::Video { .. }
+            | Block::Resource { .. } => {
                 anyhow::bail!("expected a text summary")
             }
         }
@@ -50,7 +54,11 @@ pub(super) async fn append_summary(
         "Summarize this conversation for continuation. Preserve decisions, tool outcomes and remaining work.\n{}",
         summary.instructions
     );
-    summary.messages.push(Message::User {
+    let mut messages: Vec<Message> = std::mem::take(&mut summary.messages)
+        .into_iter()
+        .map(super::media_blocks::summary_projection)
+        .collect();
+    messages.push(Message::User {
         content: vec![Content::Text { text: prompt }],
     });
     let request = ModelRequest {
@@ -60,7 +68,7 @@ pub(super) async fn append_summary(
         settings: summary.settings,
         model: summary.model.clone(),
         system_prompt: "Produce a factual conversation summary.".into(),
-        messages: summary.messages,
+        messages,
         tools: vec![],
     };
     let preflight = engine.model.preflight(&request);
