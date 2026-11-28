@@ -1,5 +1,8 @@
 //! CLI integration smoke tests for `coda media {embed, rerank, image}` against loopback mock upstreams.
 
+#[path = "support/cli_route_seed.rs"]
+mod cli_route_seed;
+
 use axum::{
     Router,
     body::Bytes,
@@ -315,27 +318,13 @@ async fn cli_media_embed_respects_top_level_data_dir_for_route() {
     let fallback_local_appdata = tempfile::tempdir().unwrap();
     let ws = tempfile::tempdir().unwrap();
 
-    let store = coda::store::Store::open(&custom_data_dir.path().join("coda.sqlite3")).unwrap();
-    let settings = coda::domain::Settings {
-        workspace: ws.path().to_string_lossy().into_owned(),
-        max_concurrency: 2,
-        routes: vec![coda::domain::Route {
-            id: "route-top-dd".into(),
-            name: "Top Data Dir Route".into(),
-            base_url,
-            model: "text-embedding-3-small".into(),
-            max_tokens: 4096,
-            parallel_limit: 1,
-            key_env: None,
-            protocol: None,
-        }],
-        newapi: None,
-    };
-    store.save_settings(&settings).unwrap();
-    store
-        .put_secret("route::route-top-dd", "top-data-dir-route-secret")
-        .unwrap();
-    drop(store);
+    cli_route_seed::seed_route(
+        custom_data_dir.path(),
+        "route-top-dd",
+        &base_url,
+        "text-embedding-3-small",
+        "top-data-dir-route-secret",
+    );
 
     let custom_dd_str = custom_data_dir.path().to_str().unwrap().to_owned();
     let ws_str = ws.path().to_str().unwrap().to_owned();

@@ -193,7 +193,7 @@ impl ProjectSessionSummary {
 }
 
 fn same_workspace_path(left: &str, right: &str) -> bool {
-    if left.eq_ignore_ascii_case(right) {
+    if left == right || (cfg!(windows) && left.eq_ignore_ascii_case(right)) {
         return true;
     }
     match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
@@ -602,7 +602,8 @@ fn display_approval_preview(engine: &Engine, record: &coda::approval::ApprovalRe
             .as_ref()
             .and_then(|a| a["command"].as_str())
             .unwrap_or(&record.preview);
-        eprintln!("\n\x1b[1;33m● run_command\x1b[0m (PowerShell):\n  \x1b[1m{cmd}\x1b[0m");
+        let shell = if cfg!(windows) { "PowerShell" } else { "sh" };
+        eprintln!("\n\x1b[1;33m● run_command\x1b[0m ({shell}):\n  \x1b[1m{cmd}\x1b[0m");
         return;
     }
 

@@ -4,6 +4,13 @@
 
 ---
 
+## M3 前置 B 分支验收（2026-11-25）
+
+- 基于 `fd7d4b9b`，分支 `feat/embedded-kernel-platforms`。Coda 宿主使用 `default-features = false` 和进程内 `EmbeddedEngine`；独立 CLI 使用默认特性。契约见[接入说明](EMBEDDING.md)。
+- macOS arm64、Linux x64 和 Windows x64 均通过全目标检查、工作区测试和 release 构建。macOS 实测 `--help`、`init`、重启后 `/sessions`。macOS Keychain 和 Linux GNOME Keyring 均实测复制库轮换、回滚、重开和删除，Windows 上用 `fd7d4b9b` 的 CLI 写入合成 DPAPI 凭据，新版 CLI 在新进程内用同一凭据通过本机模拟模型鉴权。
+- Android arm64 使用 NDK 28 和 API 24 交叉链接了 release CLI、纯内核库与嵌入测试程序。设备运行、Coda 产品接线与真实模型端到端回合待验。
+- 21 项公开嵌入契约测试通过。LLVM 对 `embedded/mod.rs`、`embedded/turn.rs`、`model_loop.rs` 的合计行覆盖率为 96.65%。付费 live 用例保持手动执行。
+
 ## Baseline 8 · Sprint 06/S6-T1 Windows 目标观察与事件等待（2026-11-19，UTC+8）
 
 - 2026-11-26 已在本地分支 `coda/s6-integration-20261126` 固定原始验收快照：Baseline 7（S5-T2）为 `b55e04e5`，其直接后继 Baseline 8（S6-T1）为 `1d5ea925`。两者的提交树均与对应补丁工作树逐项核对一致；从该分支可直接按提交检出，无须再次应用累计补丁。

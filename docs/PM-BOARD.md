@@ -30,6 +30,10 @@
 | S5-T1 | Tech-Runtime、Tech-Provider、Tech-CLI、QA-Gate | 主会话内并行检索多个目录，子请求隔离上下文，按输入顺序回传摘要及行号证据。 |
 | S5-T2 | Tech-Runtime、Tech-Provider、Tech-CLI、QA-Gate | 子任务独立落盘、按回执恢复，后续批次可引用已保存的结果。 |
 
+## Coda 产品系列 M3 前置 B（2026-11-25）
+
+嵌入内核、平台构建和独立 CLI 钥匙串已在 `feat/embedded-kernel-platforms` 验证。桌面三平台运行原生工作区测试；Android arm64 已交叉链接 CLI、库与宿主契约测试程序，设备运行待验。Coda 侧 Tauri/Bun 接线与旧 pi 会话转换属于下一阶段。宿主入口、取消与持久化契约见[接入说明](EMBEDDING.md)。
+
 ## 3. 中长期迭代路线图队列 (Product Backlog)
 
 - Windows Computer 后续按控件定向操作、记事本保存核验、图片通道分片推进。[范围和验收设计](sprints/SPRINT-06-windows-computer.md)

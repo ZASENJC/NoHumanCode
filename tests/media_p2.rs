@@ -1,3 +1,6 @@
+#[path = "support/cli_route_seed.rs"]
+mod cli_route_seed;
+
 use axum::{
     Router,
     body::Bytes as AxumBytes,
@@ -7,8 +10,6 @@ use axum::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use coda::domain::{Route, Settings};
-use coda::store::Store;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
@@ -371,6 +372,7 @@ async fn cli_media_stt_openai_whisper_mock_and_top_data_dir_route() {
             "--ffprobe-bin",
             ffprobe.to_str().unwrap(),
         ])
+        .env("CODA_DATA_DIR", mock_dir.path().join("data"))
         .output()
         .unwrap();
     assert!(
@@ -384,28 +386,13 @@ async fn cli_media_stt_openai_whisper_mock_and_top_data_dir_route() {
 
     // 3. Top-level --data-dir + --route resolution
     let data_dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&data_dir.path().join("coda.sqlite3")).unwrap();
-    store
-        .save_settings(&Settings {
-            workspace: ws.path().to_string_lossy().into_owned(),
-            max_concurrency: 2,
-            routes: vec![Route {
-                id: "tts-route".into(),
-                name: "TTS Route".into(),
-                base_url: base.clone(),
-                model: "gpt-4o-mini-tts".into(),
-                max_tokens: 4096,
-                parallel_limit: 1,
-                key_env: None,
-                protocol: None,
-            }],
-            newapi: None,
-        })
-        .unwrap();
-    store
-        .put_secret("route::tts-route", "route-secret-tts")
-        .unwrap();
-    drop(store);
+    cli_route_seed::seed_route(
+        data_dir.path(),
+        "tts-route",
+        &base,
+        "gpt-4o-mini-tts",
+        "route-secret-tts",
+    );
 
     let out_route = Command::new(bin)
         .args([
@@ -990,28 +977,13 @@ async fn cli_media_stt_idempotency_replay_paraformer_json_and_polish() {
     assert_eq!(mm_done["artifacts"][0]["mimeType"], "audio/wav");
 
     // 4. --route + --auth-mode app-access without --secondary-key-env is rejected cleanly
-    let store = Store::open(&data_dir.path().join("coda.sqlite3")).unwrap();
-    store
-        .save_settings(&Settings {
-            workspace: ws.path().to_string_lossy().into_owned(),
-            max_concurrency: 2,
-            routes: vec![Route {
-                id: "volc-route".into(),
-                name: "Volc Route".into(),
-                base_url: base.clone(),
-                model: "bigmodel".into(),
-                max_tokens: 4096,
-                parallel_limit: 1,
-                key_env: None,
-                protocol: None,
-            }],
-            newapi: None,
-        })
-        .unwrap();
-    store
-        .put_secret("route::volc-route", "route-app-key")
-        .unwrap();
-    drop(store);
+    cli_route_seed::seed_route(
+        data_dir.path(),
+        "volc-route",
+        &base,
+        "bigmodel",
+        "route-app-key",
+    );
 
     let bad_auth = Command::new(bin)
         .args([

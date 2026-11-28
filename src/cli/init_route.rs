@@ -8,7 +8,7 @@ use coda::domain::Route;
 use coda::engine::Engine;
 use serde_json::json;
 use std::collections::HashMap;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,23 +32,21 @@ fn prompt_line_with_default(label: &str, default_val: &str) -> Result<String, Fa
 }
 
 fn read_secret_from_stdin_line() -> Result<String, Failure> {
-    let mut line = String::new();
-    let mut reader = io::BufReader::new(io::stdin());
-    reader.read_line(&mut line).map_err(|e| {
-        Failure::custom(
-            "credential_invalid",
-            format!("读取 stdin API Key 失败: {e}"),
-        )
-    })?;
-    let key = line.trim_end_matches(['\r', '\n']).trim().to_owned();
-    if key.is_empty() || key.len() >= 4096 || key.chars().any(char::is_control) {
-        return Err(Failure::fixed(
-            "credential_invalid",
-            "API Key 为空或包含无效控制字符",
-            false,
-        ));
-    }
-    Ok(key)
+    read_credential(CredentialInputMode::Stdin)
+        .map(Into::into)
+        .map_err(|err| match err {
+            CredentialInputError::Cancelled => {
+                Failure::fixed("credential_cancelled", "API Key 输入已取消", false)
+            }
+            CredentialInputError::Unavailable => Failure::fixed(
+                "credential_unavailable",
+                "--api-key-stdin 需要通过管道或文件输入",
+                false,
+            ),
+            CredentialInputError::Invalid => {
+                Failure::fixed("credential_invalid", "API Key 输入无效", false)
+            }
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

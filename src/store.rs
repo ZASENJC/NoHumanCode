@@ -243,6 +243,10 @@ impl Store {
              CREATE INDEX IF NOT EXISTS tasks_run ON tasks(run_id);
              CREATE INDEX IF NOT EXISTS events_task ON events(task_id, seq);",
         )?;
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+        {
+            db.execute_batch("CREATE TABLE IF NOT EXISTS snapshot_vault_key(id INTEGER PRIMARY KEY CHECK(id=1),ref BLOB NOT NULL)")?;
+        }
         let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version < 2 {
             db.execute_batch(
@@ -345,6 +349,10 @@ impl Store {
             }
             tx.commit()?;
         }
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+        {
+            secrets::reconcile(&mut db);
+        }
         *initialized = true;
         drop(initialized);
         Ok(Self {
@@ -375,51 +383,44 @@ impl Store {
 
     pub fn save_settings(&self, value: &Settings) -> Result<()> {
         let mut db = self.db.lock().unwrap();
-        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        crate::host_configuration::save_configuration_tx(
-            &tx,
-            Some(value),
-            &Default::default(),
-            false,
-        )?;
-        tx.commit()?;
-        Ok(())
+        secrets::credential_transaction(&mut db, |tx| {
+            crate::host_configuration::save_configuration_tx(
+                tx,
+                Some(value),
+                &Default::default(),
+                false,
+            )?;
+            Ok(())
+        })
     }
 
     pub fn put_secret(&self, id: &str, secret: &str) -> Result<()> {
         let mut db = self.db.lock().unwrap();
-        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        crate::host_configuration::save_configuration_tx(
-            &tx,
-            None,
-            &std::collections::HashMap::from([(id.to_owned(), secret.to_owned())]),
-            false,
-        )?;
-        tx.commit()?;
-        Ok(())
+        secrets::credential_transaction(&mut db, |tx| {
+            crate::host_configuration::save_configuration_tx(
+                tx,
+                None,
+                &std::collections::HashMap::from([(id.to_owned(), secret.to_owned())]),
+                false,
+            )?;
+            Ok(())
+        })
     }
 
     pub fn secret(&self, id: &str) -> Result<Option<String>> {
-        let bytes: Option<Vec<u8>> = self
-            .db
-            .lock()
-            .unwrap()
-            .query_row("SELECT value FROM secrets WHERE id=?1", [id], |row| {
-                row.get(0)
-            })
-            .optional()?;
-        bytes
-            .map(|v| Ok(String::from_utf8(secrets::open(&v)?)?))
-            .transpose()
+        secrets::read_stored(&mut self.db.lock().unwrap(), id)
     }
 
     pub(crate) fn put_oauth_secret(&self, id: &str, record: &str) -> Result<()> {
-        let blob = secrets::seal(record.as_bytes())?;
-        self.db.lock().unwrap().execute(
-            "INSERT INTO secrets(id,value) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET value=excluded.value",
-            params![id, blob],
-        )?;
-        Ok(())
+        let mut db = self.db.lock().unwrap();
+        secrets::credential_transaction(&mut db, |tx| {
+            let blob = secrets::stage(tx, record.as_bytes())?;
+            tx.execute(
+                "INSERT INTO secrets(id,value) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET value=excluded.value",
+                params![id, blob],
+            )?;
+            Ok(())
+        })
     }
 
     /// A refresh or rejection of an old grant must not overwrite a newer login.
@@ -430,26 +431,27 @@ impl Store {
         replacement: Option<&str>,
     ) -> Result<bool> {
         let mut db = self.db.lock().unwrap();
-        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let blob: Option<Vec<u8>> = tx
-            .query_row("SELECT value FROM secrets WHERE id=?1", [id], |row| {
-                row.get(0)
-            })
-            .optional()?;
-        let Some(blob) = blob else { return Ok(false) };
-        if secrets::open(&blob)? != expected.as_bytes() {
-            return Ok(false);
-        }
-        if let Some(record) = replacement {
-            tx.execute(
-                "UPDATE secrets SET value=?2 WHERE id=?1",
-                params![id, secrets::seal(record.as_bytes())?],
-            )?;
-        } else {
-            tx.execute("DELETE FROM secrets WHERE id=?1", [id])?;
-        }
-        tx.commit()?;
-        Ok(true)
+        // Keyring-backed platforms journal the new item and collect the replaced one.
+        secrets::credential_transaction(&mut db, |tx| {
+            let blob: Option<Vec<u8>> = tx
+                .query_row("SELECT value FROM secrets WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            let Some(blob) = blob else { return Ok(false) };
+            if secrets::open(&blob)? != expected.as_bytes() {
+                return Ok(false);
+            }
+            if let Some(record) = replacement {
+                tx.execute(
+                    "UPDATE secrets SET value=?2 WHERE id=?1",
+                    params![id, secrets::stage(tx, record.as_bytes())?],
+                )?;
+            } else {
+                tx.execute("DELETE FROM secrets WHERE id=?1", [id])?;
+            }
+            Ok(true)
+        })
     }
 
     pub fn create_run(&self, run: &Run) -> Result<()> {
@@ -1660,12 +1662,26 @@ impl Store {
         path_key: &str,
         before: Option<&[u8]>,
     ) -> Result<PreparedChange> {
+        let mut db = self.db.lock().unwrap();
+        let id = secrets::credential_transaction(&mut db, |tx| {
+            Self::prepare_workspace_change_tx(tx, task, tool_call_id, relative, path_key, before)
+        })?;
+        drop(db);
+        self.workspace_change_by_id(&id)
+    }
+
+    fn prepare_workspace_change_tx(
+        tx: &rusqlite::Transaction<'_>,
+        task: &Task,
+        tool_call_id: &str,
+        relative: &str,
+        path_key: &str,
+        before: Option<&[u8]>,
+    ) -> Result<String> {
         let path = relative.to_owned();
         let path_key = path_key.to_owned();
         let workspace_digest = digest(task.workspace.as_bytes());
-        let mut db = self.db.lock().unwrap();
-        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let approval = repository::Repository::new(&tx)
+        let approval = repository::Repository::new(tx)
             .approval_by_tool_call(&task.id, tool_call_id)?
             .ok_or(WorkspaceChangeError::Corrupt)?;
         anyhow::ensure!(
@@ -1710,7 +1726,9 @@ impl Store {
             ChangeKind::Created
         };
         let before_digest = before.map(digest);
-        let before_blob = before.map(secrets::seal).transpose()?;
+        let before_blob = before
+            .map(|bytes| secrets::seal_snapshot(tx, bytes))
+            .transpose()?;
         let write_scopes = serde_json::to_string(&approval.write_scopes)?;
         tx.execute(
             "INSERT INTO workspace_changes(id,task_id,tool_call_id,workspace_digest,binding_digest,write_scopes,path,path_key,kind,before_blob,before_digest,after_digest,state,restore_state,created_at,finished_at) \
@@ -1731,14 +1749,12 @@ impl Store {
             ],
         )?;
         task_event_tx(
-            &tx,
+            tx,
             &task.id,
             "file_backup",
             json!({"change_id":id,"path":path,"kind":kind,"state":"prepared"}),
         )?;
-        tx.commit()?;
-        drop(db);
-        self.workspace_change_by_id(&id)
+        Ok(id)
     }
 
     pub(crate) fn workspace_change_by_id(&self, id: &str) -> Result<PreparedChange> {

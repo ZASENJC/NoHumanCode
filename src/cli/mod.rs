@@ -118,7 +118,7 @@ pub struct InitArgs {
     /// Read the API key as a single line from stdin.
     #[arg(long)]
     pub api_key_stdin: bool,
-    /// Override user data directory (defaults to %LOCALAPPDATA%\coda).
+    /// Override the platform's user data directory or CODA_DATA_DIR.
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
 }
@@ -149,7 +149,7 @@ pub struct ChatArgs {
     /// Automatically approve file edits and shell commands in this session.
     #[arg(short = 'y', long = "auto-approve")]
     pub auto_approve: bool,
-    /// Override user data directory (defaults to %LOCALAPPDATA%\coda).
+    /// Override the platform's user data directory or CODA_DATA_DIR.
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
 }
@@ -181,7 +181,7 @@ pub struct AskArgs {
     /// Automatically approve file edits and shell commands without prompting.
     #[arg(short = 'y', long = "auto-approve")]
     pub auto_approve: bool,
-    /// Override user data directory (defaults to %LOCALAPPDATA%\coda).
+    /// Override the platform's user data directory or CODA_DATA_DIR.
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
 }
@@ -1236,17 +1236,26 @@ fn enable_windows_ansi() {
     }
 }
 
-fn resolve_user_data_dir(explicit: Option<PathBuf>) -> PathBuf {
+pub(super) fn resolve_user_data_dir(explicit: Option<PathBuf>) -> PathBuf {
     if let Some(dir) = explicit {
         return dir;
     }
     if let Some(env_dir) = std::env::var_os("CODA_DATA_DIR").filter(|v| !v.is_empty()) {
         return PathBuf::from(env_dir);
     }
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()) {
-        return PathBuf::from(local_app_data).join("coda");
-    }
-    PathBuf::from(".coda-data")
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let base = std::env::home_dir().map(|home| home.join("Library/Application Support"));
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| std::env::home_dir().map(|home| home.join(".local/share")));
+    base.map(|dir| dir.join("coda"))
+        .unwrap_or_else(|| PathBuf::from(".coda-data"))
 }
 
 fn open_local_engine(

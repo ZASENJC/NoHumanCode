@@ -43,7 +43,7 @@
 
 ---
 
-## 2. 核心架构与两条执行主链
+## 2. CLI、HTTP 与嵌入宿主的执行链
 
 Coda CLI 以单一进程内的 `Store`（SQLite 持久化中心）与 `Engine`（生命周期、工具循环与并发调度核心）为底座，向上提供**两条清晰分离的执行主链**：
 
@@ -104,9 +104,24 @@ flowchart TD
 
 ---
 
+### 2.3 链 C　进程内库宿主（M3 前置 B）
+
+宿主将模型网关、工具审查与执行、分支会话存储注入 `coda::EmbeddedEngine`。`default-features = false` 只链接嵌入模块及其协议。宿主按事件驱动界面，内核持有回合任务；关闭界面后，已开始的回合继续落盘。CLI 与 HTTP 入口使用默认 `standalone` 特性和 SQLite。
+
+| 模块 | 职责 |
+| --- | --- |
+| [src/embedded/mod.rs](src/embedded/mod.rs) | 宿主 traits、会话独占、定向取消、显式压缩 |
+| [src/embedded/turn.rs](src/embedded/turn.rs) | 预检模型请求、流式回调、持久化工具意图、审查与批次收尾 |
+| [src/model_loop.rs](src/model_loop.rs) | 独立与嵌入模式共用的请求轮数与取消检查 |
+| [crates/protocol/src/embedded.rs](crates/protocol/src/embedded.rs) | 零 I/O 的消息、工具、用量和回合事件类型 |
+| [tests/embedded_kernel.rs](tests/embedded_kernel.rs) | 纯宿主回调驱动的模型回合、工具、取消、压缩与冲突恢复 |
+| [tests/credential_lifecycle.rs](tests/credential_lifecycle.rs) | 独立 CLI 的系统钥匙串写入、轮换、回滚、重开与删除 |
+
+构建目标为 Windows x64、macOS arm64、Linux x64 和 Android arm64。独立 CLI 在 Windows 使用 DPAPI，在 macOS 使用 Keychain，在 Linux 和具备 D-Bus Secret Service 的 Android 终端使用登录用户的钥匙串。APK 的宿主提供自己的密钥管理。参见[跨平台构建](README.md#跨平台构建)和[Coda 宿主接入说明](docs/EMBEDDING.md)。
+
 ## 3. Rust 源码模块全景表
 
-以下完整覆盖 `src/` 下的 源码模块 以及 `crates/protocol` 共享协议包。
+以下按职责列出独立 CLI 模块；嵌入宿主通过第 2.3 节的模块和契约接入。
 
 ### ① 入口与交互层
 
@@ -196,7 +211,7 @@ flowchart TD
 
 ## 4. 自动化测试矩阵地图
 
-集成测试位于 [tests/](tests)，共包含 **13 个 Rust 集成测试目标**。真实 CLI 的端到端用例覆盖[远程 MCP 传输](tests/support/http_mcp_workbench.rs)、[OAuth 登录与刷新](tests/support/oauth_workbench.rs)和[多账号故障转移](tests/support/key_pool_workbench.rs)。
+集成测试位于 [tests/](tests)，共包含 **13 个 Rust 集成测试目标**，另有嵌入接口（[tests/embedded_kernel.rs](tests/embedded_kernel.rs)）及系统钥匙串（[tests/credential_lifecycle.rs](tests/credential_lifecycle.rs)）回归测试。真实 CLI 的端到端用例覆盖[远程 MCP 传输](tests/support/http_mcp_workbench.rs)、[OAuth 登录与刷新](tests/support/oauth_workbench.rs)和[多账号故障转移](tests/support/key_pool_workbench.rs)。
 
 ### 4.1 集成测试目标一览
 

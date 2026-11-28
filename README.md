@@ -4,7 +4,7 @@ Windows 本机优先的旗舰级 AI 编程工作台：聚焦**多模型原生流
 
 ## 目录结构与全局导航
 
-- [PROJECT-MAP.md](PROJECT-MAP.md)：**现行项目地图（全局导航入口）**——架构拓扑、两条核心执行主链、Rust 源码模块职责与集成测试矩阵
+- [PROJECT-MAP.md](PROJECT-MAP.md)：**现行项目地图（全局导航入口）**——架构拓扑、CLI、HTTP 与嵌入库的执行链、源码模块与集成测试矩阵
 - [docs/PM-BOARD.md](docs/PM-BOARD.md)：**研发总控看板与基线台账**——迭代节奏、团队模块领地（[TEAM-CHARTER.md](docs/TEAM-CHARTER.md)）、架构决策录（[ARCHITECTURE-DECISIONS.md](docs/ARCHITECTURE-DECISIONS.md)）与已验证基线记录
 - [AGENTS.md](AGENTS.md)：核心工程准则与日常构建/验证命令
 - [PROJECT-BOOK.md](PROJECT-BOOK.md)：长期产品定位、设计理念与两阶段演进路线
@@ -22,7 +22,7 @@ Windows 本机优先的旗舰级 AI 编程工作台：聚焦**多模型原生流
 powershell -ExecutionPolicy Bypass -File .\build.ps1 -Action build
 ```
 
-### 2. 模型路由与多厂商原生流式凭据（支持 Windows DPAPI 加密存储或零初始化环境变量）
+### 2. 模型路由与多厂商原生流式凭据
 
 原生支持三大主流协议的流式推理与工具调用，无需额外部署中转层：
 
@@ -30,7 +30,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 -Action build
 - **Anthropic Messages API**（原生支持 Extended Thinking + Tool Use）：`ANTHROPIC_API_KEY`
 - **Google Gemini `streamGenerateContent`**：`GEMINI_API_KEY`
 
-默认本机数据目录为 `%LOCALAPPDATA%\coda`（数据库文件 `coda.sqlite3`，可通过环境变量 `CODA_DATA_DIR` 或 `--data-dir` 覆盖）。
+独立 CLI 在 Windows 使用原有 DPAPI，在 macOS 使用登录 Keychain，在 Linux 和具备 D-Bus Secret Service 的 Android 终端使用系统钥匙串。SQLite 记录桌面钥匙串条目的引用。Windows、macOS 和 Linux 默认数据目录分别为 `%LOCALAPPDATA%\coda`、`~/Library/Application Support/coda`、`$XDG_DATA_HOME/coda`（缺省 `~/.local/share/coda`）。`CODA_DATA_DIR` 或 `--data-dir` 可指定数据目录。
 
 ```powershell
 # 方式 A：一步式持久化初始化路由与加密凭据（支持 --provider openai|anthropic|gemini 快捷预设）
@@ -191,3 +191,41 @@ coda chat --dir .
 服务需提供与登记资源匹配的受保护资源元数据、与 `issuer` 匹配的授权服务器元数据，以及 S256 PKCE 支持。资源挑战中的元数据地址须与 MCP 资源同源。授权服务器可在元数据中公布不同 HTTPS 域名的授权及令牌端点。如果服务要求特定权限范围才签发刷新令牌，请在 `scopes` 中登记该范围。获得刷新令牌后，CLI 会在访问令牌到期或发现工具时收到 401 后尝试刷新。授权失效时，终端会提示重新登录。已派发的工具调用收到 401 时会记录结果未知，避免重复执行。
 
 工具沿用 `mcp__<服务名>__<工具名>` 命名。工作台在审批时显示本次调用绑定的地址。同一会话可复用工具目录和连接；派发后的响应中断会记录为结果未知。支持 POST 返回 JSON 或 SSE，并处理分页工具目录与服务端会话 ID。[MCP 传输协议 2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
+
+## 跨平台构建
+
+使用 Rust stable（Edition 2024）和本机 C 工具链。Windows x64 运行上面的 MSVC 脚本，macOS arm64 需要 Xcode 命令行工具，Linux x64 需要 C 编译器和链接器。在仓库根执行：
+
+```sh
+cargo fmt --check
+cargo check --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --release --locked
+```
+
+Windows 和 Linux 在准备好各自的凭据服务后，用 `cargo test --workspace --locked` 运行全量测试。macOS 从仓库根运行以下命令，使用隔离的临时系统钥匙串执行同一套测试和真实钥匙串用例：
+
+```sh
+swift -suppress-warnings tests/macos-keychain.swift
+```
+
+该入口向测试与 CLI 子进程传入 `CODA_KEYCHAIN_PATH`。手动指定时提供已解锁的现有钥匙串绝对路径，路径无效或钥匙串锁定会使凭据操作失败。
+
+独立二进制位于 `target/release/coda`（Windows 为 `coda.exe`）。macOS/Linux 的独立 CLI 需要可解锁的登录钥匙串才能保存密钥或加密文件快照。SQLite 备份保存凭据引用，恢复后若对应钥匙串项已回收，需重新录入 API Key。Linux 的 Secret Service 使用 D-Bus；运行独立 CLI 全量测试时，建议在隔离的、已解锁的用户钥匙串会话中使用合成凭据。宿主纯内核测试在无桌面环境也可运行：
+
+```sh
+cargo test --locked --no-default-features --test embedded_kernel
+```
+
+Android arm64 交叉构建使用 Rust target `aarch64-linux-android` 和 NDK LLVM。以下示例使用 API 24 和 macOS 上 NDK 提供的 host 目录，`ANDROID_NDK_HOME` 指向已安装的 NDK 版本目录：
+
+```sh
+ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+export CC_aarch64_linux_android="$ndk_bin/aarch64-linux-android24-clang"
+export AR_aarch64_linux_android="$ndk_bin/llvm-ar"
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+cargo build --locked --release --target aarch64-linux-android
+cargo build --locked --release --no-default-features --lib --target aarch64-linux-android
+```
+
+Linux 编译主机将 `darwin-x86_64` 换成 NDK 的 `linux-x86_64`。Android 独立终端需提供可访问的 Secret Service 才能保存路由凭据。在 Tauri APK 中使用宿主提供的模型传输与 Android Keystore。接口、C3 v2 事件与运行示例见[接入说明](docs/EMBEDDING.md)。
