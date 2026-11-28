@@ -850,6 +850,7 @@ fn network_http_failure(value: Value) -> Result<Failure, Failure> {
         "unknown" => "unknown",
         "internal" => "internal",
         "upstream" => "upstream",
+        "invalid_tool_arguments" => "invalid_tool_arguments",
         other => budget_error_code(other)
             .map(|(code, _)| code)
             .or_else(|| project_error_code(other))

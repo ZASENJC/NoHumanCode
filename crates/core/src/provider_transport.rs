@@ -178,9 +178,15 @@ pub struct ProviderError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransportError {
     Invalid,
-    Response { status: u16 },
+    Response {
+        status: u16,
+    },
     Provider(ProviderError),
-    InvalidResponse { status: u16 },
+    InvalidResponse {
+        status: u16,
+    },
+    /// Tool-call arguments in an otherwise complete stream were not valid JSON.
+    InvalidToolArguments,
     Unknown,
 }
 
@@ -189,7 +195,7 @@ impl TransportError {
         match self {
             Self::Response { status } | Self::InvalidResponse { status } => Some(*status),
             Self::Provider(err) => Some(err.status),
-            Self::Invalid | Self::Unknown => None,
+            Self::Invalid | Self::InvalidToolArguments | Self::Unknown => None,
         }
     }
 
@@ -223,6 +229,9 @@ impl fmt::Display for TransportError {
                 (None, None) => write!(f, "provider HTTP failure ({})", err.status),
             },
             Self::InvalidResponse { status } => write!(f, "invalid provider response ({status})"),
+            Self::InvalidToolArguments => {
+                f.write_str("模型返回的工具参数不是有效 JSON，请重试或检查提供商的工具调用兼容性")
+            }
             Self::Unknown => f.write_str("provider result unknown"),
         }
     }

@@ -32,6 +32,8 @@ pub enum CodecError {
     #[allow(dead_code)]
     Limit,
     Failed,
+    /// The provider streamed tool-call arguments that are not valid JSON.
+    InvalidToolArguments,
 }
 
 pub type CompletionOutput = (NeutralMessage, Value);
@@ -634,6 +636,7 @@ impl CompletionLease {
                     CodecError::Invalid => TransportError::InvalidResponse {
                         status: response_status,
                     },
+                    CodecError::InvalidToolArguments => TransportError::InvalidToolArguments,
                     CodecError::Limit | CodecError::Failed => TransportError::Unknown,
                 }
             }

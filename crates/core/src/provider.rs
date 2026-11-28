@@ -106,7 +106,7 @@ pub async fn models(
 struct ToolParts {
     id: String,
     name: String,
-    arguments: String,
+    arguments: Option<String>,
 }
 
 #[derive(Default)]
@@ -118,6 +118,7 @@ pub struct Decoder {
     pub text: String,
     pub reasoning: String,
     tools: BTreeMap<usize, ToolParts>,
+    invalid_argument_fragment: bool,
     pub usage: Value,
     usage_observation: UsageObservation,
     cache_read_tokens: Option<u64>,
@@ -225,8 +226,12 @@ impl Decoder {
                     if let Some(s) = call["function"]["name"].as_str() {
                         part.name.push_str(s);
                     }
-                    if let Some(s) = call["function"]["arguments"].as_str() {
-                        part.arguments.push_str(s);
+                    match call["function"].get("arguments") {
+                        Some(Value::String(fragment)) => {
+                            part.arguments.get_or_insert_default().push_str(fragment)
+                        }
+                        Some(_) => self.invalid_argument_fragment = true,
+                        None => (),
                     }
                 }
             }
@@ -254,6 +259,9 @@ impl Decoder {
             self.finish.as_deref() != Some("content_filter"),
             "模型拒绝生成此内容"
         );
+        if self.invalid_argument_fragment {
+            return Err(TransportError::InvalidToolArguments.into());
+        }
         let content = if self.tools.is_empty() && self.text.trim().is_empty() {
             if !self.allow_empty_text {
                 ensure!(!self.reasoning.trim().is_empty(), "模型没有返回内容");
@@ -282,19 +290,28 @@ impl Decoder {
             });
         }
         for part in self.tools.into_values() {
-            if self.allow_non_object_tool_args {
+            let arguments = if self.allow_non_object_tool_args {
                 ensure!(!part.name.is_empty(), "不完整的工具调用");
+                part.arguments.unwrap_or_default()
             } else {
                 ensure!(
                     !part.id.is_empty() && !part.name.is_empty(),
                     "不完整的工具调用"
                 );
-                let _: Value = serde_json::from_str(&part.arguments).context("工具参数不完整")?;
-            }
+                // Only an explicit empty string stands for "no arguments".
+                let arguments = part.arguments.ok_or(TransportError::InvalidToolArguments)?;
+                if arguments.is_empty() {
+                    "{}".into()
+                } else {
+                    serde_json::from_str::<Value>(&arguments)
+                        .map_err(|_| TransportError::InvalidToolArguments)?;
+                    arguments
+                }
+            };
             blocks.push(ContentBlock::ToolCall(ToolCallBlock {
                 id: part.id,
                 name: part.name,
-                arguments: part.arguments,
+                arguments,
                 thought_signature: None,
                 namespace: None,
             }));
@@ -2874,13 +2891,7 @@ impl crate::provider_runtime::CompletionDecoder for Decoder {
                 || self.finish.is_some());
         Decoder::finish_neutral(*self, &mut |text| emit(text))
             .map(|message| (message, usage))
-            .map_err(|_| {
-                if interrupted_after_progress {
-                    crate::provider_runtime::CodecError::Failed
-                } else {
-                    crate::provider_runtime::CodecError::Invalid
-                }
-            })
+            .map_err(|error| chat_finish_error(&error, interrupted_after_progress))
     }
 
     fn finish_with_breakdown(
@@ -2907,14 +2918,23 @@ impl crate::provider_runtime::CompletionDecoder for Decoder {
                 || !self.reasoning.is_empty()
                 || !self.tools.is_empty()
                 || self.finish.is_some());
-        let msg = Decoder::finish_neutral(*self, &mut |text| emit(text)).map_err(|_| {
-            if interrupted_after_progress {
-                crate::provider_runtime::CodecError::Failed
-            } else {
-                crate::provider_runtime::CodecError::Invalid
-            }
-        })?;
+        let msg = Decoder::finish_neutral(*self, &mut |text| emit(text))
+            .map_err(|error| chat_finish_error(&error, interrupted_after_progress))?;
         Ok(((msg, usage), breakdown))
+    }
+}
+
+/// Malformed tool arguments keep a dedicated, value-free diagnostic for the caller.
+fn chat_finish_error(
+    error: &anyhow::Error,
+    interrupted_after_progress: bool,
+) -> crate::provider_runtime::CodecError {
+    if error.downcast_ref::<TransportError>() == Some(&TransportError::InvalidToolArguments) {
+        crate::provider_runtime::CodecError::InvalidToolArguments
+    } else if interrupted_after_progress {
+        crate::provider_runtime::CodecError::Failed
+    } else {
+        crate::provider_runtime::CodecError::Invalid
     }
 }
 
@@ -3258,9 +3278,12 @@ pub async fn complete_neutral(
                 .map_err(|_| TransportError::Unknown)?;
         }
     }
-    decoder
-        .finish(emit_ref)
-        .map_err(|_| TransportError::Unknown)
+    decoder.finish(emit_ref).map_err(|error| match error {
+        crate::provider_runtime::CodecError::InvalidToolArguments => {
+            TransportError::InvalidToolArguments
+        }
+        _ => TransportError::Unknown,
+    })
 }
 
 pub async fn complete(
@@ -3318,6 +3341,66 @@ pub async fn balance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn finish_chat_tool(function: Value) -> Result<Value> {
+        let chunk = json!({"choices": [{"delta": {"tool_calls": [{
+            "index": 0, "id": "call-1", "function": function
+        }]}, "finish_reason": "tool_calls"}]});
+        let mut decoder = Decoder::default();
+        let stream = format!("data: {chunk}\n\ndata: [DONE]\n\n");
+        decoder.feed(stream.as_bytes(), &mut |_| Ok(()))?;
+        decoder.finish(&mut |_| Ok(()))
+    }
+
+    #[test]
+    fn chat_tool_accepts_only_explicit_empty_arguments_as_an_empty_object() {
+        let message = finish_chat_tool(json!({"name": "todo_read", "arguments": ""})).unwrap();
+        assert_eq!(message["tool_calls"][0]["function"]["arguments"], "{}");
+        for function in [
+            json!({"name": "todo_read"}),
+            json!({"name": "todo_read", "arguments": null}),
+            json!({"name": "todo_read", "arguments": " \t"}),
+            json!({"name": "", "arguments": ""}),
+        ] {
+            assert!(finish_chat_tool(function).is_err());
+        }
+    }
+
+    #[test]
+    fn non_string_argument_fragment_cannot_be_normalized_to_empty_object() {
+        for (first, second) in [
+            (json!(""), json!({"path":"ignored"})),
+            (Value::Null, json!("")),
+        ] {
+            let mut decoder = Decoder::default();
+            let declaration =
+                json!({"index": 0, "id": "id", "function": {"name": "lookup", "arguments": first}});
+            let continuation = json!({"index": 0, "function": {"arguments": second}});
+            for (call, finish) in [(declaration, None), (continuation, Some("tool_calls"))] {
+                let chunk = json!({"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": finish}]});
+                decoder
+                    .feed(format!("data: {chunk}\n\n").as_bytes(), &mut |_| Ok(()))
+                    .unwrap();
+            }
+            decoder.feed(b"data: [DONE]\n\n", &mut |_| Ok(())).unwrap();
+            let error = decoder.finish(&mut |_| Ok(())).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<TransportError>(),
+                Some(&TransportError::InvalidToolArguments)
+            );
+        }
+    }
+
+    #[test]
+    fn chat_tool_rejects_malformed_arguments_with_safe_json_diagnostic() {
+        let error = finish_chat_tool(json!({
+            "name": "todo_read", "arguments": "{\"fixture-private-value\":"
+        }))
+        .unwrap_err();
+        let diagnostic = format!("{error:#}");
+        assert!(diagnostic.contains("JSON"), "{diagnostic}");
+        assert!(!diagnostic.contains("fixture-private-value"));
+    }
 
     #[test]
     fn utf8_sse_fragmented_tools_and_unredacted_code() {

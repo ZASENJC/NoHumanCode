@@ -125,6 +125,13 @@ pub fn classify_transport_error(
             retryable: false,
             message: format!("invalid upstream response ({status})"),
         },
+        TransportError::InvalidToolArguments => EmbeddedModelError {
+            code: "PROTOCOL_DECODE_ERROR",
+            status: None,
+            upstream_code: None,
+            retryable: false,
+            message: TransportError::InvalidToolArguments.to_string(),
+        },
         TransportError::Invalid => EmbeddedModelError {
             code: "INTERNAL",
             status: None,

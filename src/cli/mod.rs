@@ -146,7 +146,7 @@ pub struct ChatArgs {
         conflicts_with = "continue_session"
     )]
     pub resume: Option<String>,
-    /// Automatically approve file edits and shell commands in this session.
+    /// Automatically approve file edits and shell commands throughout this CLI process.
     #[arg(short = 'y', long = "auto-approve")]
     pub auto_approve: bool,
     /// Override the platform's user data directory or CODA_DATA_DIR.
